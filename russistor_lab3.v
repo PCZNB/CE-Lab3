@@ -82,60 +82,71 @@ module SingleCycleCPU(
         || (opcode == `OPCODE_ADD_UPPR)
     );
 
-   // System State (everything is neg assert)
-   InstMem IMEM(
+    always @ (posedge clk) begin
+        MemWrEn <= (opcode != `OPCODE_STORE);
+        RWrEn   <= (opcode == `OPCODE_BRANCH)
+                || (opcode == `OPCODE_STORE);
+    end
+
+
+
+    ////////////////////////////////////////////////////////////////////////////////
+    //IF Stage
+    InstMem IMEM(
         .Addr(PC),          .Size(`SIZE_WORD),
         .DataOut(InstWord), .CLK(clk)
-   );
+    );  
 
-   DataMem DMEM(
-        .Addr(DataAddr),    .Size(MemSize),
-        .DataIn(StoreData), .DataOut(DataWord),
-        .WEN(MemWrEn),      .CLK(clk)
-   );
-
-   RegFile RF(
-        .AddrA(Rsrc1), .DataOutA(Rdata1),
-	.AddrB(Rsrc2), .DataOutB(Rdata2),
-	.AddrW(Rdst),  .DataInW(RWrdata),
-        .WenW(RWrEn),  .CLK(clk)
-   );
-
-   Reg PC_REG(
-        .Din(NPC),  .Qout(PC),
+    Reg PC_REG(
+        .Din(PC_4),  .Qout(PC),
         .WEN(1'b0), .CLK(clk),
         .RST(rst)
-   );
+    );
 
+    // IntermediateRegister Instance (Between IF and ID Stage)
+    IntermediateRegister IF_ID_Register(
+        .clk(clk),
+        .rst(rst),
+        .pc_in(PC),           // PC value from PC_REG
+        .rs1_in(InstWord),       // Placeholder, not used in this connection
+        .rs2_in(32'b0),       // Placeholder, not used in this connection
+        .rs3_in(32'b0),       // Placeholder, not used in this connection
+        .pc_out(PC_1),  // PC value to ID stage
+        .rs1_out(Instword_out),           // Not used in this connection
+        .rs2_out(),           // Not used in this connection
+        .rs3_out()            // Not used in this connection
+    );
 
-    // Instruction Decode
-    assign opcode = InstWord[6:0];
-    assign Rdst   = InstWord[11:7];
-    assign Rsrc1  = InstWord[19:15];
-    assign Rsrc2  = InstWord[24:20];
-    assign funct3 = InstWord[14:12];  // R-Type, I-Type, S-Type
-    assign funct7 = InstWord[31:25];  // R-Type
+    
+/////////////////////////////////////////////////////////////////////////////////////////
+// ID/WB Stage
+    assign opcode = Instword_out[6:0];
+    assign Rdst   = Instword_out[11:7];
+    assign Rsrc1  = Instword_out[19:15];
+    assign Rsrc2  = Instword_out[24:20];
+    assign funct3 = Instword_out[14:12];  // R-Type, I-Type, S-Type
+    assign funct7 = Instword_out[31:25];  // R-Type
 
-    assign IImm = InstWord[31:20];
-    assign UImm = InstWord[31:12];
+    assign IImm = Instword_out[31:20];
+    assign UImm = Instword_out[31:12];
 
     assign SImm = {
-        InstWord[31:25],
-        InstWord[11:7]
+        Instword_out[31:25],
+        Instword_out[11:7]
     };
 
     assign BImm = {
-        InstWord[31],
-        InstWord[7],
-        InstWord[30:25],
-        InstWord[11:8]
+        Instword_out[31],
+        Instword_out[7],
+        Instword_out[30:25],
+        Instword_out[11:8]
     };
 
     assign JImm = {
-        InstWord[31],
-        InstWord[19:12],
-        InstWord[20],
-        InstWord[30:21]
+        Instword_out[31],
+        Instword_out[19:12],
+        Instword_out[20],
+        Instword_out[30:21]
     };
 
     assign Imm =
@@ -149,41 +160,117 @@ module SingleCycleCPU(
         :  (opcode == `OPCODE_JUMP)      ? JImm
         :  32'hX;
 
-    /*
-    wire [31:0] opB;
-    assign opB = (opcode == `OPCODE_IMMEDIATE)
-              || (opcode == `OPCODE_LOAD)
-              || (opcode == `OPCODE_STORE)
-               ? ext_imm : Rdata2; // Wrong
-    */
+///
+Bubble
 
+    RegFile RF(
+            .AddrA(Rsrc1), .DataOutA(Rdata1),
+        .AddrB(Rsrc2), .DataOutB(Rdata2),
+        .AddrW(Rdst),  .DataInW(RWrdata),
+            .WenW(RWrEn),  .CLK(clk)
+    );///read in ID and write in WB
+
+
+
+    Extender imm_extender(
+        .data_in(Imm), // Immediate from instruction
+        .ext_type(
+            (opcode == `OPCODE_BRANCH)    ? 4'b0001
+            :  (opcode == `OPCODE_JUMP)      ? 4'b0010
+            :  (opcode == `OPCODE_LOAD_UPPR)
+            || (opcode == `OPCODE_ADD_UPPR)  ? 4'b0100
+            :  4'd0
+        ),             // Extended immediate output
+        .data_out(ext_imm)
+    );
+
+    IntermediateRegister ID_EX_Register(
+        .clk(clk),
+        .rst(rst),
+        .pc_in(PC_1),
+        .rs1_in(Rdata1),
+        .rs2_in(Rdata2),
+        .rs3_in(ext_imm),
+        .pc_out(PC_2),
+        .rs1_out(Rdata1_out),
+        .rs2_out(Rdata2_out),
+        .rs3_out(ext_imm_out)
+    );
+
+   
+
+
+
+
+
+
+    /////////////////////////////////////
+    //Ex Stage
     wire [31:0] euResult;
     assign RWrdata  = (opcode == `OPCODE_LOAD)
-                    ? ext_data : euResult; // remember to add conditions
-    assign DataAddr = euResult;
+                    ? ext_data_out : euResult_final; // remember to add conditions
+    assign DataAddr = euResult_out;
 
-    // Control signals for register write enable
-    /*
-    always @(*) begin
-        RWrEn = (opcode == `OPCODE_COMPUTE)
-             || (opcode == `OPCODE_IMMEDIATE)
-             || (opcode == `OPCODE_LOAD);
-    end
-    */
-    /*
-    assign RWrEn = (opcode == `OPCODE_COMPUTE)
-                || (opcode == `OPCODE_IMMEDIATE)
-                || (opcode == `OPCODE_LOAD)
-                || (opcode == `OPCODE_JUMP)
-                || (opcode == `OPCODE_JUMP_REG)
-                || (opcode == `OPCODE_LOAD_UPPR)
-                || (opcode == `OPCODE_ADD_UPPR);
-    */
-    always @ (posedge clk) begin
-        MemWrEn <= (opcode != `OPCODE_STORE);
-        RWrEn   <= (opcode == `OPCODE_BRANCH)
-                || (opcode == `OPCODE_STORE);
-    end
+    //forwarding
+
+    ExecutionUnit eu(
+        .result(euResult),  // Output of the EU goes to the register file or data memory
+        .opA(Rdata1_out),       // Operand A comes from the register file (rs1)
+        .opB(Rdata2_out),       // Operand B is immediate for I-type and load and save instructions, or rs2 for R-type
+        .func(funct3),
+        .aux_func(funct7),  // Auxiliary function field from the instruction (not used for I-type)
+        .opcode(opcode),    // Opcode to determine the operation
+        .MemSize(MemSize),
+
+        .imm(ext_imm_out),
+        .oldPC(PC_2),
+        .newPC(NPC),
+        .memdata(StoreData)
+    );
+
+    IntermediateRegister EX_DM_Register(
+        .clk(clk),
+        .rst(rst),
+        .pc_in(NPC),
+        .rs1_in(euResult),
+        .rs2_in(MemSize),
+        .rs3_in(StoreData),
+        .pc_out(PC_3),
+        .rs1_out(euResult_out),
+        .rs2_out(MemSize_out),
+        .rs3_out(StoreData_out)
+    );
+
+
+//////////////////////////////////////////////////////
+    /////DM Stage
+    DataMem DMEM(
+        .Addr(DataAddr),    .Size(MemSize),
+        .DataIn(StoreData_out), .DataOut(DataWord),
+        .WEN(MemWrEn),      .CLK(clk)
+    );
+    Extender data_extender(
+        .data_in(DataWord),        // Data read from memory
+        .ext_type({1'b1, funct3}), // Type of extension for the data (sign, zero, etc.)
+        .data_out(ext_data)        // Extended data output for register file
+    );
+
+    IntermediateRegister DM_WB_Register(
+        .clk(clk),
+        .rst(rst),
+        .pc_in(PC_3),
+        .rs1_in(ext_data),
+        .rs2_in(euResult_out),
+        .rs3_in(32'b0),
+        .pc_out(PC_4),
+        .rs1_out(ext_data_out),
+        .rs2_out(euResult_final),
+        .rs3_out()
+    );
+
+
+
+    
 
     /*
     always @ (negedge clk) begin
@@ -216,41 +303,6 @@ module SingleCycleCPU(
    // EU instantiation for R-type (COMPUTE) operations
    // Control signals (these would be set by your control unit)
 
-   // EU instantiation for R-type and I-type operations
-   ExecutionUnit eu(
-      .result(euResult),  // Output of the EU goes to the register file or data memory
-      .opA(Rdata1),       // Operand A comes from the register file (rs1)
-      .opB(Rdata2),       // Operand B is immediate for I-type and load and save instructions, or rs2 for R-type
-      .func(funct3),
-      .aux_func(funct7),  // Auxiliary function field from the instruction (not used for I-type)
-      .opcode(opcode),    // Opcode to determine the operation
-      .MemSize(MemSize),
-
-      .imm(ext_imm),
-      .oldPC(PC),
-      .newPC(NPC),
-      .memdata(StoreData)
-   );
-
-
-   // Extend module instantiation for I-type immediate extension
-   Extender imm_extender(
-      .data_in(Imm), // Immediate from instruction
-      .ext_type(
-            (opcode == `OPCODE_BRANCH)    ? 4'b0001
-         :  (opcode == `OPCODE_JUMP)      ? 4'b0010
-         :  (opcode == `OPCODE_LOAD_UPPR)
-         || (opcode == `OPCODE_ADD_UPPR)  ? 4'b0100
-         :  4'd0
-      ),             // Extended immediate output
-      .data_out(ext_imm)
-   );
-
-   Extender data_extender(
-      .data_in(DataWord),        // Data read from memory
-      .ext_type({1'b1, funct3}), // Type of extension for the data (sign, zero, etc.)
-      .data_out(ext_data)        // Extended data output for register file
-   );
 
 
 
@@ -431,5 +483,37 @@ module Extender(
             default: data_out = 32'hX; // Invalid operation
         endcase
     end
+
+endmodule
+
+module IntermediateRegister(
+    input clk,
+    input rst, // Reset signal
+    input [31:0] pc_in, // PC value from previous stage
+    input [31:0] rs1_in, // rs1 value from previous stage
+    input [31:0] rs2_in, // rs2 value from previous stage
+    input [31:0] rs3_in, // Immediate value from previous stage
+    output reg [31:0] pc_out, // PC value to next stage
+    output reg [31:0] rs1_out, // rs1 value to next stage
+    output reg [31:0] rs2_out, // rs2 value to next stage
+    output reg [31:0] rs3_out // Immediate value to next stage
+);
+
+    // Logic to update the register values on the clock edge
+    always @(posedge clk or posedge rst) {
+        if (rst) {
+            // Initialize the output registers to a known state
+            pc_out <= 32'b0;
+            rs1_out <= 32'b0;
+            rs2_out <= 32'b0;
+            rs3_out_out <= 32'b0;
+        } else {
+            // Pass the values to the next stage
+            pc_out <= pc_in;
+            rs1_out <= rs1_in;
+            rs2_out <= rs2_in;
+            rs3_out <= rs3_in;
+        }
+    }
 
 endmodule
