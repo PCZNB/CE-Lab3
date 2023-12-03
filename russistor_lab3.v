@@ -42,6 +42,9 @@
 `define SIZE_HWORD    2'b01
 `define SIZE_WORD     2'b10
 
+`define ZeroWord 32'h00000000 // add a new define to subsitude 32b'0
+`define RstEnable 1'b1  // add a define of rstenable value 1 is right?
+
 module SingleCycleCPU(
     output halt, // Reset signal
     input  clk,  // Clock signal
@@ -67,6 +70,21 @@ module SingleCycleCPU(
    wire [19:0] UImm, JImm;
    wire [31:0]  Imm, ext_imm,
                      ext_data;
+        // Assuming these are not defined elsewhere in your provided code
+ // Assuming these are not defined elsewhere in your provided code
+   wire [31:0] Instword_out;
+   wire [31:0] ext_data_out;
+   wire [31:0] euResult_final;
+   wire [31:0] euResult_out;
+   wire [31:0] PC_1, PC_2, PC_3, PC_4; // PC outputs from intermediate registers
+   wire [31:0] Rdata1_out, Rdata2_out; // Data outputs from ID_EX Register
+   wire [31:0] StoreData_out; // Store data output from EX_MEM Register
+   wire [1:0] MemSize_out; // MemSize output from EX_MEM Register
+   wire [21:0] id_ex_bus_out; // Output from ID_EX Register
+   wire [4:0] ex_Rdst; // Extracted from id_ex_bus_out
+   wire [4:0] ex_Rdst_pass, ex_Rdst_final; // Passed through intermediate registers
+   wire [31:0] ext_imm_out; // Output from ID_EX Register
+
 
 
    // Only support R-TYPE ADD and SUB
@@ -82,11 +100,8 @@ module SingleCycleCPU(
         || (opcode == `OPCODE_ADD_UPPR)
     );
 
-    always @ (posedge clk) begin
-        MemWrEn <= (opcode != `OPCODE_STORE);
-        RWrEn   <= (opcode == `OPCODE_BRANCH)
-                || (opcode == `OPCODE_STORE);
-    end
+
+
 
 
 
@@ -104,18 +119,15 @@ module SingleCycleCPU(
     );
 
     // IntermediateRegister Instance (Between IF and ID Stage)
-    IntermediateRegister IF_ID_Register(
+    IF_ID IF_ID_Register(
         .clk(clk),
         .rst(rst),
-        .pc_in(PC),           // PC value from PC_REG
-        .rs1_in(InstWord),       // Placeholder, not used in this connection
-        .rs2_in(32'b0),       // Placeholder, not used in this connection
-        .rs3_in(32'b0),       // Placeholder, not used in this connection
-        .pc_out(PC_1),  // PC value to ID stage
-        .rs1_out(Instword_out),           // Not used in this connection
-        .rs2_out(),           // Not used in this connection
-        .rs3_out()            // Not used in this connection
-    );
+        .pc_in(PC),          // PC value from PC_REG
+        .rs1_in(InstWord),   // InstWord value from the previous stage (IF)
+        .pc_out(PC_1),       // PC value to ID stage
+        .rs1_out(Instword_out) // Instruction word to ID stage
+    ); // <-- Semicolon to end the instantiation
+
 
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -129,6 +141,10 @@ module SingleCycleCPU(
 
     assign IImm = Instword_out[31:20];
     assign UImm = Instword_out[31:12];
+
+
+    wire [21:0] id_ex_bus;
+    assign id_ex_bus = {funct7, funct3, Rdst, opcode}; // Concatenation
 
     assign SImm = {
         Instword_out[31:25],
@@ -160,6 +176,7 @@ module SingleCycleCPU(
         :  (opcode == `OPCODE_JUMP)      ? JImm
         :  32'hX;
 
+<<<<<<< HEAD
 ///
     // Bubble
     reg [7:0] prev;
@@ -199,12 +216,23 @@ module SingleCycleCPU(
         .fwd1(fwd1),
         .fwd2(fwd2)
     );
+=======
+    wire [31:0] euResult;
+    assign RWrdata  = (opcode == `OPCODE_LOAD)
+                    ? ext_data_out : euResult_final; // remember to add conditions
+    assign DataAddr = euResult_out;
+>>>>>>> 4348788096e74c9d5e7d739c00d47bc01caf8487
 
     RegFile RF(
         .AddrA(Rsrc1), .DataOutA(Rdata1),
         .AddrB(Rsrc2), .DataOutB(Rdata2),
+<<<<<<< HEAD
         .AddrW(Rdst),  .DataInW(RWrdata),
         .WenW(RWrEn),  .CLK(clk)
+=======
+        .AddrW(ex_Rdst_final),  .DataInW(RWrdata),
+            .WenW(RWrEn),  .CLK(clk)
+>>>>>>> 4348788096e74c9d5e7d739c00d47bc01caf8487
     );///read in ID and write in WB
 
 
@@ -221,17 +249,19 @@ module SingleCycleCPU(
         .data_out(ext_imm)
     );
 
-    IntermediateRegister ID_EX_Register(
+    ID_EX ID_EX_Register(
         .clk(clk),
         .rst(rst),
         .pc_in(PC_1),
         .rs1_in(Rdata1),
         .rs2_in(Rdata2),
         .rs3_in(ext_imm),
+        .rs4_in(id_ex_bus),
         .pc_out(PC_2),
         .rs1_out(Rdata1_out),
         .rs2_out(Rdata2_out),
-        .rs3_out(ext_imm_out)
+        .rs3_out(ext_imm_out),
+        .rs4_out(id_ex_bus_out)
     );
 
 
@@ -243,20 +273,29 @@ module SingleCycleCPU(
 
     /////////////////////////////////////
     //Ex Stage
-    wire [31:0] euResult;
-    assign RWrdata  = (opcode == `OPCODE_LOAD)
-                    ? ext_data_out : euResult_final; // remember to add conditions
-    assign DataAddr = euResult_out;
 
-    //forwarding
+    always @ (*) begin
+        MemWrEn <= (opcode != `OPCODE_STORE);
+        RWrEn   <= (opcode == `OPCODE_BRANCH)
+                || (opcode == `OPCODE_STORE);
+    end
+
+
+    wire [6:0] ex_funct7;
+    wire [2:0] ex_funct3;
+    wire [6:0] ex_opcode;
+
+    assign {ex_funct7, ex_funct3, ex_Rdst, ex_opcode} = id_ex_bus_out;
+
+
 
     ExecutionUnit eu(
         .result(euResult),  // Output of the EU goes to the register file or data memory
         .opA(Rdata1_out),       // Operand A comes from the register file (rs1)
         .opB(Rdata2_out),       // Operand B is immediate for I-type and load and save instructions, or rs2 for R-type
-        .func(funct3),
-        .aux_func(funct7),  // Auxiliary function field from the instruction (not used for I-type)
-        .opcode(opcode),    // Opcode to determine the operation
+        .func(ex_funct3),
+        .aux_func(ex_funct7),  // Auxiliary function field from the instruction (not used for I-type)
+        .opcode(ex_opcode),    // Opcode to determine the operation
         .MemSize(MemSize),
 
         .imm(ext_imm_out),
@@ -265,17 +304,19 @@ module SingleCycleCPU(
         .memdata(StoreData)
     );
 
-    IntermediateRegister EX_DM_Register(
+    EX_MEM EX_MEM_Register(
         .clk(clk),
         .rst(rst),
         .pc_in(NPC),
         .rs1_in(euResult),
         .rs2_in(MemSize),
         .rs3_in(StoreData),
+        .rs4_in(ex_Rdst),
         .pc_out(PC_3),
         .rs1_out(euResult_out),
         .rs2_out(MemSize_out),
-        .rs3_out(StoreData_out)
+        .rs3_out(StoreData_out),
+        .rs4_out(ex_Rdst_pass)
     );
 
 
@@ -292,17 +333,17 @@ module SingleCycleCPU(
         .data_out(ext_data)        // Extended data output for register file
     );
 
-    IntermediateRegister DM_WB_Register(
+    MEM_WB MEM_WB_Register(
         .clk(clk),
         .rst(rst),
         .pc_in(PC_3),
         .rs1_in(ext_data),
         .rs2_in(euResult_out),
-        .rs3_in(32'b0),
+        .rs3_in(ex_Rdst_pass),
         .pc_out(PC_4),
         .rs1_out(ext_data_out),
         .rs2_out(euResult_final),
-        .rs3_out()
+        .rs3_out(ex_Rdst_final)
     );
 
 
@@ -618,34 +659,196 @@ module Extender(
 
 endmodule
 
-module IntermediateRegister(
+module IF_ID(
+    input wire clk,
+    input wire rst, // Reset signal
+    input wire [31:0] pc_in, // PC value from previous stage
+    input wire [31:0] rs1_in, // rs1 value from previous stage  //add wire to all input
+    output reg [31:0] pc_out, // PC value to next stage
+    output reg [31:0] rs1_out // rs1 value to next stage
+);
+
+    // Logic to update the register values on the clock edge
+    always @(posedge clk) begin
+        if (rst == `RstEnable) begin
+            pc_out <= `ZeroWord;
+            rs1_out <= `ZeroWord;
+        end else begin
+            pc_out <= pc_in;
+            rs1_out <= rs1_in;
+        end
+    end
+endmodule
+
+    /*always @(posedge clk or posedge rst) begin
+        if (rst) {
+            pc_out <= `ZeroWord; // Non-blocking for sequential logic
+            rs1_out <= `ZeroWord; // Non-blocking for sequential logic
+        } else {
+            pc_out <= pc_in; // Non-blocking for sequential logic
+            rs1_out <= rs1_in; // Non-blocking for sequential logic
+        }
+    end
+endmodule*/
+
+
+
+
+module ID_EX(
     input clk,
     input rst, // Reset signal
     input [31:0] pc_in, // PC value from previous stage
     input [31:0] rs1_in, // rs1 value from previous stage
     input [31:0] rs2_in, // rs2 value from previous stage
     input [31:0] rs3_in, // Immediate value from previous stage
+    input [21:0] rs4_in, //bus
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [31:0] rs2_out, // rs2 value to next stage
-    output reg [31:0] rs3_out // Immediate value to next stage
+    output reg [31:0] rs3_out, // Immediate value to next stage
+    output reg [21:0] rs4_out
 );
 
     // Logic to update the register values on the clock edge
-    always @(posedge clk or posedge rst) {
-        if (rst) {
-            // Initialize the output registers to a known state
-            pc_out <= 32'b0;
-            rs1_out <= 32'b0;
-            rs2_out <= 32'b0;
-            rs3_out_out <= 32'b0;
-        } else {
-            // Pass the values to the next stage
-            pc_out <= pc_in;
+
+always @(posedge clk) begin
+        if (rst == `RstEnable) begin
+            pc_out <= `ZeroWord;
+            rs1_out <= `ZeroWord;
+            rs2_out <= `ZeroWord;
+            rs3_out <= `ZeroWord;
+            rs4_out <= `ZeroWord;
+        end else begin
+             pc_out <= pc_in;
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
+            rs4_out <= rs4_in;
+        end
+    end
+
+   /* always @(posedge clk or posedge rst) begin
+        if (rst) {
+            // Initialize the output registers to a known state
+            pc_out = 32'b0;
+            rs1_out = 32'b0;
+            rs2_out = 32'b0;
+            rs3_out = 32'b0;
+            rs4_out = 32'b0;
+        } else {
+            // Pass the values to the next stage
+            pc_out = pc_in;
+            rs1_out = rs1_in;
+            rs2_out = rs2_in;
+            rs3_out = rs3_in;
+            rs4_out = rs4_in;
+            
         }
-    }
+    end */
+
+endmodule
+
+module EX_MEM(
+    input clk,
+    input rst, // Reset signal
+    input [31:0] pc_in, // PC value from previous stage
+    input [31:0] rs1_in, // rs1 value from previous stage
+    input [1:0] rs2_in, // memorysize
+    input [31:0] rs3_in, // Immediate value from previous stage
+    input [4:0] rs4_in,
+    output reg [31:0] pc_out, // PC value to next stage
+    output reg [31:0] rs1_out, // rs1 value to next stage
+    output reg [1:0] rs2_out, // rs2 value to next stage
+    output reg [31:0] rs3_out, // Immediate value to next stage
+    output reg [4:0] rs4_out
+);
+
+    // Logic to update the register values on the clock edge
+    always @(posedge clk) begin
+        if (rst == `RstEnable) begin
+            pc_out <= `ZeroWord;
+            rs1_out <= `ZeroWord;
+            rs2_out <= `ZeroWord;
+            rs3_out <= `ZeroWord;
+            rs4_out <= `ZeroWord;
+        end else begin
+             pc_out <= pc_in;
+            rs1_out <= rs1_in;
+            rs2_out <= rs2_in;
+            rs3_out <= rs3_in;
+            rs4_out <= rs4_in;
+        end
+    end
+
+
+    /*always @(posedge clk or posedge rst) begin
+        if (rst) {
+            // Initialize the output registers to a known state
+            pc_out = 32'b0;
+            rs1_out = 32'b0;
+            rs2_out = 32'b0;
+            rs3_out = 32'b0;
+            rs4_out = 32'b0;
+        } else {
+            // Pass the values to the next stage
+            pc_out = pc_in;
+            rs1_out = rs1_in;
+            rs2_out = rs2_in;
+            rs3_out = rs3_in;
+            rs4_out = rs4_in;
+            
+        }
+    end*/
+    
+
+endmodule
+
+module MEM_WB(
+    input clk,
+    input rst, // Reset signal
+    input [31:0] pc_in, // PC value from previous stage
+    input [31:0] rs1_in, // rs1 value from previous stage
+    input [31:0] rs2_in, // rs2 value from previous stage
+    input [4:0] rs3_in, // rdst
+    output reg [31:0] pc_out, // PC value to next stage
+    output reg [31:0] rs1_out, // rs1 value to next stage
+    output reg [31:0] rs2_out, // rs2 value to next stage
+    output reg [4:0] rs3_out // Immediate value to next stage
+);
+
+    // Logic to update the register values on the clock edge
+    always @(posedge clk) begin
+        if (rst == `RstEnable) begin
+            pc_out <= `ZeroWord;
+            rs1_out <= `ZeroWord;
+            rs2_out <= `ZeroWord;
+            rs3_out <= `ZeroWord;
+        end else begin
+             pc_out <= pc_in;
+            rs1_out <= rs1_in;
+            rs2_out <= rs2_in;
+            rs3_out <= rs3_in;
+        end
+    end
+
+
+    /*always @(posedge clk or posedge rst) begin
+        if (rst) {
+            // Initialize the output registers to a known state
+            pc_out = 32'b0;
+            rs1_out = 32'b0;
+            rs2_out = 32'b0;
+            rs3_out = 32'b0;
+            rs4_out = 32'b0;
+        } else {
+            // Pass the values to the next stage
+            pc_out = pc_in;
+            rs1_out = rs1_in;
+            rs2_out = rs2_in;
+            rs3_out = rs3_in;
+            rs4_out = rs4_in;
+            
+        }
+    end*/
 
 endmodule
