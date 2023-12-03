@@ -95,7 +95,7 @@ module SingleCycleCPU(
     InstMem IMEM(
         .Addr(PC),          .Size(`SIZE_WORD),
         .DataOut(InstWord), .CLK(clk)
-    );  
+    );
 
     Reg PC_REG(
         .Din(PC_4),  .Qout(PC),
@@ -117,7 +117,7 @@ module SingleCycleCPU(
         .rs3_out()            // Not used in this connection
     );
 
-    
+
 /////////////////////////////////////////////////////////////////////////////////////////
 // ID/WB Stage
     assign opcode = Instword_out[6:0];
@@ -161,13 +161,50 @@ module SingleCycleCPU(
         :  32'hX;
 
 ///
-Bubble
+    // Bubble
+    reg [7:0] prev;
+    reg [4:0] prerd;
+    reg keep;
+    reg delay;
+
+    Stall bubble(
+        .prev(prev), .rd(prevrd), .rs1(Rsrc1),
+        .rs2(  (opcode == `OPCODE_COMPUTE)
+            || (opcode == `OPCODE_STORE)
+            || (opcode == `OPCODE_BRANCH)
+             ? Rsrc2 : 32'b0),
+        .clk(clk),   .rst(rst),
+        .keep(keep), .delay(delay)
+    );
+
+    reg [4:0] oldrd;
+    reg [1:0] fwd1;
+    reg [1:0] fwd2;
+    reg prekeep;
+    reg oldkeep;
+    reg prewr;
+    reg oldwr;
+
+    Forward fwd(
+        .rs1(Rsrc1),
+        .rs2(  (opcode == `OPCODE_COMPUTE)
+            || (opcode == `OPCODE_STORE)
+            || (opcode == `OPCODE_BRANCH)
+             ? Rsrc2 : 32'b0),
+        .rd1(prerd),
+        .rd2(oldrd),
+        .output1(prekeep && prewr),
+        .output2(oldkeep && oldwr),
+        .clk(clk),
+        .fwd1(fwd1),
+        .fwd2(fwd2)
+    );
 
     RegFile RF(
-            .AddrA(Rsrc1), .DataOutA(Rdata1),
+        .AddrA(Rsrc1), .DataOutA(Rdata1),
         .AddrB(Rsrc2), .DataOutB(Rdata2),
         .AddrW(Rdst),  .DataInW(RWrdata),
-            .WenW(RWrEn),  .CLK(clk)
+        .WenW(RWrEn),  .CLK(clk)
     );///read in ID and write in WB
 
 
@@ -175,7 +212,7 @@ Bubble
     Extender imm_extender(
         .data_in(Imm), // Immediate from instruction
         .ext_type(
-            (opcode == `OPCODE_BRANCH)    ? 4'b0001
+               (opcode == `OPCODE_BRANCH)    ? 4'b0001
             :  (opcode == `OPCODE_JUMP)      ? 4'b0010
             :  (opcode == `OPCODE_LOAD_UPPR)
             || (opcode == `OPCODE_ADD_UPPR)  ? 4'b0100
@@ -197,7 +234,7 @@ Bubble
         .rs3_out(ext_imm_out)
     );
 
-   
+
 
 
 
@@ -270,7 +307,7 @@ Bubble
 
 
 
-    
+
 
     /*
     always @ (negedge clk) begin
@@ -319,6 +356,101 @@ Bubble
    // assign NPC = PC_Plus_4;
 
 endmodule // SingleCycleCPU
+
+
+module Forward(
+    input [4:0] rs1,
+    input [4:0] rs2,
+    input [4:0] rd1,
+    input [4:0] rd2,
+    input output1,
+    input output2,
+    input clk,
+
+    output reg [1:0] fwd1,
+    output reg [1:0] fwd2
+);
+
+initial begin
+    fwd1 <= 0;
+    fwd2 <= 0;
+end
+
+always @(posedge clk) begin
+    if (output1) begin
+        if (rd1 == rs1) begin
+            fwd1 <= fwd1 | 2'b01;
+        end
+
+        if (rd1 == rs2)
+            fwd1 <= fwd1 | 2'b10;
+        end
+    end
+
+    if (output2) begin
+        if (rd2 == rs1) begin
+            fwd2 <= fwd2 | 2'b01;
+        end
+
+        if (rd2 == rs2) begin
+            fwd2 <= fwd2 | 2'b10;
+        end
+    end
+end
+
+endmodule
+
+
+module Stall(
+    input [7:0] prev,
+    input [4:0] rd,
+    input [4:0] rs1,
+    input [4:0] rs2,
+    input clk,
+    input rst,
+    output reg keep,
+    output reg delay
+);
+
+reg temp;
+
+initial begin
+    keep  <= 0;
+    delay <= 0;
+end
+
+always @(negedge clk) begin
+    keep <= temp;
+end
+
+always @(opcode or rst) begin
+    if (rst) begin
+        temp  <= 0;
+        delay <= 0;
+    end
+    else begin
+        if (prev == `OPCODE_LOAD) begin
+            if (rs1 == rd) begin
+                keep  <= 1;
+                delay <= 1;
+            end
+            else if (rs2 == rd) begin
+                keep  <= 1;
+                delay <= 1;
+            end
+            else begin
+                keep  <= 1;
+                delay <= 0;
+            end
+        end
+        else begin
+            temp  <= 1;
+            delay <= 0;
+        end
+    end
+end
+
+endmodule
 
 
 module ExecutionUnit(
