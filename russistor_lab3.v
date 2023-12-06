@@ -209,7 +209,7 @@ module SingleCycleCPU(
             || (opcode == `OPCODE_STORE)
             || (opcode == `OPCODE_BRANCH)
              ? Rsrc2 : 32'b0),
-        .clk(clk),   .rst(rst),
+        .clk(clk),   .halt(halt),
         .keep(keep), .delay(delay)
     );
 
@@ -220,21 +220,6 @@ module SingleCycleCPU(
     reg oldkeep;
     reg prewr;
     reg oldwr;
-
-    Forward fwd(
-        .rs1(Rsrc1),
-        .rs2(  (opcode == `OPCODE_COMPUTE)
-            || (opcode == `OPCODE_STORE)
-            || (opcode == `OPCODE_BRANCH)
-             ? Rsrc2 : 32'b0),
-        .rd1(prerd),
-        .rd2(oldrd),
-        .output1(prekeep && prewr),
-        .output2(oldkeep && oldwr),
-        .clk(clk),
-        .fwd1(fwd1),
-        .fwd2(fwd2)
-    );
 
     wire [31:0] euResult;
     assign RWrdata  = (opcode == `OPCODE_LOAD)
@@ -286,6 +271,22 @@ module SingleCycleCPU(
 
     /////////////////////////////////////
     //Ex Stage
+
+    Forward fwd(
+        .rs1(Rdata1_out),
+        .rs2(  (opcode == `OPCODE_COMPUTE)
+            || (opcode == `OPCODE_STORE)
+            || (opcode == `OPCODE_BRANCH)
+             ? Rdata2_out : 32'b0),
+        .rd1(id_ex_bus[11:7]),
+        .rd2(InstWord[11:7]),
+        .output1(prekeep && prewr),
+        .output2(oldkeep && oldwr),
+        .clk(clk),
+        .fwd1(fwd1),
+        .fwd2(fwd2)
+    );
+
 
     always @ (*) begin
         MemWrEn <= (opcode != `OPCODE_STORE);
@@ -467,7 +468,7 @@ module Stall(
     input [4:0] rs1,
     input [4:0] rs2,
     input clk,
-    input rst,
+    input halt,
     output reg keep,
     output reg delay
 );
@@ -483,8 +484,8 @@ always @(negedge clk) begin
     keep <= temp;
 end
 
-always @(opcode or rst) begin
-    if (rst) begin
+always @(opcode or halt) begin
+    if (halt) begin
         temp  <= 0;
         delay <= 0;
     end
