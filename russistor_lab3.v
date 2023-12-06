@@ -60,6 +60,10 @@ module SingleCycleCPU(
    wire [4:0]  Rsrc1,  Rsrc2,  Rdst;
    wire [31:0] Rdata1, Rdata2, RWrdata;
    reg         RWrEn;
+   reg         RWrEn1;
+   reg         RWrEn2;
+   reg         RWrEn3;
+   reg         RWrEn4;
 
    wire [31:0] NPC, PC_Plus_4;
    wire [6:0]  opcode;
@@ -124,8 +128,12 @@ module SingleCycleCPU(
         .rst(rst),
         .pc_in(PC),          // PC value from PC_REG
         .rs1_in(InstWord),   // InstWord value from the previous stage (IF)
+        .RWrEn(RWrEn),
+        .keep()
         .pc_out(PC_1),       // PC value to ID stage
-        .rs1_out(Instword_out) // Instruction word to ID stage
+        .rs1_out(Instword_out), // Instruction word to ID stage
+        .RWrEn_out(RWrEn1),
+        .keep_out()
     ); // <-- Semicolon to end the instantiation
 
 
@@ -201,6 +209,12 @@ module SingleCycleCPU(
     reg [7:0] prev;
     reg [4:0] prerd;
     reg keep;
+    reg keep1;
+    reg keep2;
+    reg keep3;
+    reg keep4;
+
+
     reg delay;
 
     Stall bubble(
@@ -255,11 +269,15 @@ module SingleCycleCPU(
         .rs2_in(Rdata2),
         .rs3_in(ext_imm),
         .rs4_in(id_ex_bus),
+        .RWrEn(RWrEn1),
+        .keep()
         .pc_out(PC_2),
         .rs1_out(Rdata1_out),
         .rs2_out(Rdata2_out),
         .rs3_out(ext_imm_out),
-        .rs4_out(id_ex_bus_out)
+        .rs4_out(id_ex_bus_out),
+        .RWrEn_out(RWrEn2),
+        .keep_out()
     );
 
 
@@ -330,13 +348,17 @@ module SingleCycleCPU(
         .rs2_in(MemSize),
         .rs3_in(StoreData),
         .rs4_in(ex_Rdst),
+        .RWrEn(RWrEn2),
+        .keep()
         .pc_out(PC_3),
         .rs1_out(euResult_out),
         .rs2_out(MemSize_out),
         .rs3_out(StoreData_out),
         .rs4_out(ex_Rdst_pass),
         .PC_jump(PCjump),
-        .PC_jump_out(PCsrc)
+        .PC_jump_out(PCsrc),
+        .RWrEn_out(RWrEn3),
+        .keep_out()
     );
 
 
@@ -360,10 +382,14 @@ module SingleCycleCPU(
         .rs1_in(ext_data),
         .rs2_in(euResult_out),
         .rs3_in(ex_Rdst_pass),
+        .RWrEn(RWrEn3),
+        .keep()
         .pc_out(PC_4),
         .rs1_out(ext_data_out),
         .rs2_out(euResult_final),
-        .rs3_out(ex_Rdst_final)
+        .rs3_out(ex_Rdst_final),
+        .RWrEn_out(RWrEn4),
+        .keep_out()
     );
 
 
@@ -696,14 +722,18 @@ module Extender(
 endmodule
 
 module IF_ID(
-    input wire clk,
-    input wire rst, // Reset signal
-    input wire PCsrc,
-    input wire keep,
+    input clk,
+    input rst, // Reset signal
+    input PCsrc,
+    input keep,
+    input RWrEn,
+
     input wire [31:0] pc_in, // PC value from previous stage
     input wire [31:0] rs1_in, // rs1 value from previous stage  //add wire to all input
     output reg [31:0] pc_out, // PC value to next stage
-    output reg [31:0] rs1_out // rs1 value to next stage
+    output reg [31:0] rs1_out, // rs1 value to next stage
+    output reg keep_out,
+    output reg RWrEn_out
 );
 
     // Logic to update the register values on the clock edge
@@ -711,12 +741,18 @@ module IF_ID(
         if (rst == `RstEnable) begin
             pc_out <= `ZeroWord;
             rs1_out <= `ZeroWord;
+            keep_out <= 1'b0; 
+            RWrEn_out <= 1'b0;
         end else if(PCsrc)begin //跳转发生就清零，复制一下上面的部分，改一下控制信号就行了，记得把PCsrc指令接过来
 	        pc_out <= `ZeroWord;
 			rs1_out <= `ZeroWord;
+            keep_out <= 1'b0; 
+            RWrEn_out <= 1'b0;
         end else begin
             pc_out <= pc_in;
             rs1_out <= rs1_in;
+            keep_out <= keep; 
+            RWrEn_out <= RWrEn_out;
         end
     end
 endmodule
@@ -744,11 +780,14 @@ module ID_EX(
     input [31:0] rs3_in, // Immediate value from previous stage
     input [21:0] rs4_in, //bus
     input keep,
+    input RWrEn,
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [31:0] rs2_out, // rs2 value to next stage
     output reg [31:0] rs3_out, // Immediate value to next stage
-    output reg [21:0] rs4_out
+    output reg [21:0] rs4_out,
+    output reg keep_out,
+    output reg RWrEn_out
 );
 
     // Logic to update the register values on the clock edge
@@ -760,18 +799,24 @@ always @(posedge clk) begin
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
             rs4_out <= `ZeroWord;
+            keep_out <= 1'b0; 
+            RWrEn_out <= 1'b0;
             end else if(PCsrc)begin //跳转发生就清零，复制一下上面的部分，改一下控制信号就行了，记得把PCsrc指令接过来
 	        pc_out <= `ZeroWord;
 			rs1_out <= `ZeroWord;
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
             rs4_out <= `ZeroWord;
+            keep_out <= 1'b0; 
+            RWrEn_out <= 1'b0;
         end else begin
-             pc_out <= pc_in;
+            pc_out <= pc_in;
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
             rs4_out <= rs4_in;
+            keep_out <= keep; 
+            RWrEn_out <= RWrEn_out;
         end
     end
 
@@ -805,13 +850,16 @@ module EX_MEM(
     input [31:0] rs3_in, // Immediate value from previous stage
     input [4:0] rs4_in,
     input PC_jump,
+    input keep,
+    input RWrnE,
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [1:0] rs2_out, // rs2 value to next stage
     output reg [31:0] rs3_out, // Immediate value to next stage
     output reg [4:0] rs4_out,
-    output reg PC_jump_out
-
+    output reg PC_jump_out,
+    output reg keep_out,
+    output reg RWrEn_out
 );
 
     // Logic to update the register values on the clock edge
@@ -823,14 +871,18 @@ module EX_MEM(
             rs3_out <= `ZeroWord;
             rs4_out <= `ZeroWord;
             PC_jump_out <= 1'b0;
-
+            keep_out <= 1'b0; 
+            RWrEn_out <= 1'b0; 
+ 
         end else begin
-             pc_out <= pc_in;
+            pc_out <= pc_in;
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
             rs4_out <= rs4_in;
-            PC_jump_out <= PC_jump ;
+            PC_jump_out <= PC_jump;
+            keep_out <= keep; 
+            RWrEn_out <= RWrEn_out;
         end
     end
 
@@ -864,11 +916,15 @@ module MEM_WB(
     input [31:0] rs1_in, // rs1 value from previous stage
     input [31:0] rs2_in, // rs2 value from previous stage
     input [4:0] rs3_in, // rdst
+    input keep,
+    input RWrnE,
 
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [31:0] rs2_out, // rs2 value to next stage
     output reg [4:0] rs3_out // Immediate value to next stage
+    output reg keep_out,
+    output reg RWrEn_out
 );
 
     // Logic to update the register values on the clock edge
@@ -879,11 +935,15 @@ module MEM_WB(
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
             PC_jump <= 0;
+            keep_out <= 1'b0; 
+            RWrEn_out <= 1'b0;
         end else begin
             pc_out <= pc_in;
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
+            keep_out <= keep; 
+            RWrEn_out <= RWrEn_out;
         end
     end
 
