@@ -113,7 +113,7 @@ module SingleCycleCPU(
     );
 
     Reg PC_REG(
-        .Din(PC_4),  .Qout(PC),
+        .Din(curPC),  .Qout(PC),
         .WEN(1'b0), .CLK(clk),
         .RST(rst)
     );
@@ -127,6 +127,26 @@ module SingleCycleCPU(
         .pc_out(PC_1),       // PC value to ID stage
         .rs1_out(Instword_out) // Instruction word to ID stage
     ); // <-- Semicolon to end the instantiation
+
+
+   //放在if阶段，但是接口没接， 可能和pc-reg功能有重叠
+    
+    wire PCsrc = 1'b0;
+    wire currentpc; 
+
+    PC PCBranch(
+        .clk(clk),
+        .rst(rst),
+        .PCsrc(PCsrc),
+        .newPC(PC_3),
+        .PCdelay(delay),
+        .prePC(PC_1),
+        .curPC(currentpc)
+
+    );
+    
+
+
 
 
 
@@ -176,7 +196,6 @@ module SingleCycleCPU(
         :  (opcode == `OPCODE_JUMP)      ? JImm
         :  32'hX;
 
-<<<<<<< HEAD
 ///
     // Bubble
     reg [7:0] prev;
@@ -216,23 +235,17 @@ module SingleCycleCPU(
         .fwd1(fwd1),
         .fwd2(fwd2)
     );
-=======
+
     wire [31:0] euResult;
     assign RWrdata  = (opcode == `OPCODE_LOAD)
                     ? ext_data_out : euResult_final; // remember to add conditions
     assign DataAddr = euResult_out;
->>>>>>> 4348788096e74c9d5e7d739c00d47bc01caf8487
 
     RegFile RF(
         .AddrA(Rsrc1), .DataOutA(Rdata1),
         .AddrB(Rsrc2), .DataOutB(Rdata2),
-<<<<<<< HEAD
-        .AddrW(Rdst),  .DataInW(RWrdata),
-        .WenW(RWrEn),  .CLK(clk)
-=======
         .AddrW(ex_Rdst_final),  .DataInW(RWrdata),
             .WenW(RWrEn),  .CLK(clk)
->>>>>>> 4348788096e74c9d5e7d739c00d47bc01caf8487
     );///read in ID and write in WB
 
 
@@ -301,8 +314,12 @@ module SingleCycleCPU(
         .imm(ext_imm_out),
         .oldPC(PC_2),
         .newPC(NPC),
-        .memdata(StoreData)
+        .memdata(StoreData),
+        .PCsrc(PCjump)
+
     );
+
+    wire PCjump;
 
     EX_MEM EX_MEM_Register(
         .clk(clk),
@@ -316,7 +333,9 @@ module SingleCycleCPU(
         .rs1_out(euResult_out),
         .rs2_out(MemSize_out),
         .rs3_out(StoreData_out),
-        .rs4_out(ex_Rdst_pass)
+        .rs4_out(ex_Rdst_pass),
+        .PC_jump(PCjump),
+        .PC_jump_out(PCsrc)
     );
 
 
@@ -423,7 +442,7 @@ always @(posedge clk) begin
             fwd1 <= fwd1 | 2'b01;
         end
 
-        if (rd1 == rs2)
+        if (rd1 == rs2) begin
             fwd1 <= fwd1 | 2'b10;
         end
     end
@@ -507,7 +526,8 @@ module ExecutionUnit(
     output reg [31:0] result, // output to RWrdata
     output reg [31:0] memdata,
     output reg MemWrEn,       // Memory Write Enable signal
-    output reg [1:0] MemSize  // Memory Size signal
+    output reg [1:0] MemSize,  // Memory Size signal
+    output reg PCsrc // 
 );
 
 // Intermediate signals
@@ -526,8 +546,7 @@ always @(*) begin
 
     case (opcode)
         `OPCODE_COMPUTE: begin // R-type instructions
-            newPC = oldPC + 4;
-
+            PCsrc = 1'b0;
             case (func)
                 `FUNC_ADD_SUB: result = (aux_func == `AUX_FUNC_SUB)
                                       ? (opA - opB)
@@ -548,7 +567,7 @@ always @(*) begin
 
         `OPCODE_IMMEDIATE: begin // I-type instructions
             // Assuming 'immediate' is the immediate value extracted from the I-type instruction
-            newPC = oldPC + 4;
+            PCsrc = 1'b0;
 
             case (func)
                 `FUNC_ADD_SUB: result = opA + imm;
@@ -570,6 +589,7 @@ always @(*) begin
         `OPCODE_LOAD, `OPCODE_STORE: begin // Load and Store instructions
             result = opA   + imm;          // Calculate the address
             newPC  = oldPC + 4;
+            PCsrc = 1'b0;
 
             // Determine the memory size for load/store operations
             case (func)
@@ -597,34 +617,49 @@ always @(*) begin
         `OPCODE_BRANCH: begin
             result = 32'hX;
             case (func)
-                `FUNC_BEQ:  newPC = (opA == opB) ? oldPC + imm : oldPC + 4;
-                `FUNC_BNE:  newPC = (opA != opB) ? oldPC + imm : oldPC + 4;
-                `FUNC_BLT:  newPC = (opA >= opB) ? oldPC + imm : oldPC + 4;
-                `FUNC_BGE:  newPC = (opA  < opB) ? oldPC + imm : oldPC + 4;
-                `FUNC_BLTU: newPC = ($signed(opA) >= $signed(opB)) ? oldPC + imm : oldPC + 4;
-                `FUNC_BGEU: newPC = ($signed(opA)  < $signed(opB)) ? oldPC + imm : oldPC + 4;
+                `FUNC_BEQ: begin newPC = (opA == opB) ? oldPC + imm : oldPC + 4; 
+                            PCsrc = (opA == opB) ? 1'b1 : 1'b0;
+                end
+                `FUNC_BNE:  begin newPC = (opA != opB) ? oldPC + imm : oldPC + 4;
+                            PCsrc = (opA != opB) ? 1'b1 : 1'b0;
+                end
+                `FUNC_BLT:  begin newPC = (opA >= opB) ? oldPC + imm : oldPC + 4; 
+                            PCsrc = (opA >= opB) ? 1'b1 : 1'b0;
+                end
+                `FUNC_BGE:  begin newPC = (opA  < opB) ? oldPC + imm : oldPC + 4; 
+                            PCsrc = (opA < opB) ? 1'b1 : 1'b0;
+                            end
+                `FUNC_BLTU: begin newPC = ($signed(opA) >= $signed(opB)) ? oldPC + imm : oldPC + 4; 
+                            PCsrc = ($signed(opA) >= $signed(opB)) ? 1'b1 : 1'b0;
+                            end
+                `FUNC_BGEU: begin newPC = ($signed(opA)  < $signed(opB)) ? oldPC + imm : oldPC + 4; 
+                            PCsrc = ($signed(opA)  < $signed(opB)) ? 1'b1 : 1'b0;
+                end
                 default:    newPC = 32'hX;
             endcase
         end
+             
 
         `OPCODE_JUMP:      begin
+            PCsrc = 1'b1;
             result = oldPC + 4;
             newPC  = oldPC + imm;
         end
 
         `OPCODE_JUMP_REG:  begin
+            PCsrc = 1'b1;
             result = oldPC + 4;
             newPC  = opA   + imm;
         end
 
         `OPCODE_LOAD_UPPR: begin
             result = imm;
-            newPC  = oldPC + 4;
+            PCsrc = 1'b0;
         end
 
         `OPCODE_ADD_UPPR:  begin
             result = oldPC + imm;
-            newPC  = oldPC + 4;
+            PCsrc = 1'b0;
         end
 
         // I-type instructions can be added here if needed
@@ -662,6 +697,8 @@ endmodule
 module IF_ID(
     input wire clk,
     input wire rst, // Reset signal
+    input wire PCsrc,
+    input wire keep,
     input wire [31:0] pc_in, // PC value from previous stage
     input wire [31:0] rs1_in, // rs1 value from previous stage  //add wire to all input
     output reg [31:0] pc_out, // PC value to next stage
@@ -673,6 +710,9 @@ module IF_ID(
         if (rst == `RstEnable) begin
             pc_out <= `ZeroWord;
             rs1_out <= `ZeroWord;
+        end else if(PCsrc)begin //跳转发生就清零，复制一下上面的部分，改一下控制信号就行了，记得把PCsrc指令接过来
+	        pc_out <= `ZeroWord;
+			rs1_out <= `ZeroWord;
         end else begin
             pc_out <= pc_in;
             rs1_out <= rs1_in;
@@ -702,6 +742,7 @@ module ID_EX(
     input [31:0] rs2_in, // rs2 value from previous stage
     input [31:0] rs3_in, // Immediate value from previous stage
     input [21:0] rs4_in, //bus
+    input keep,
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [31:0] rs2_out, // rs2 value to next stage
@@ -715,6 +756,12 @@ always @(posedge clk) begin
         if (rst == `RstEnable) begin
             pc_out <= `ZeroWord;
             rs1_out <= `ZeroWord;
+            rs2_out <= `ZeroWord;
+            rs3_out <= `ZeroWord;
+            rs4_out <= `ZeroWord;
+            end else if(PCsrc)begin //跳转发生就清零，复制一下上面的部分，改一下控制信号就行了，记得把PCsrc指令接过来
+	        pc_out <= `ZeroWord;
+			rs1_out <= `ZeroWord;
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
             rs4_out <= `ZeroWord;
@@ -756,11 +803,14 @@ module EX_MEM(
     input [1:0] rs2_in, // memorysize
     input [31:0] rs3_in, // Immediate value from previous stage
     input [4:0] rs4_in,
+    input PC_jump,
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [1:0] rs2_out, // rs2 value to next stage
     output reg [31:0] rs3_out, // Immediate value to next stage
-    output reg [4:0] rs4_out
+    output reg [4:0] rs4_out,
+    output reg PC_jump_out
+
 );
 
     // Logic to update the register values on the clock edge
@@ -771,12 +821,15 @@ module EX_MEM(
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
             rs4_out <= `ZeroWord;
+            PC_jump_out <= 1'b0;
+
         end else begin
              pc_out <= pc_in;
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
             rs4_out <= rs4_in;
+            PC_jump_out <= PC_jump ;
         end
     end
 
@@ -810,6 +863,7 @@ module MEM_WB(
     input [31:0] rs1_in, // rs1 value from previous stage
     input [31:0] rs2_in, // rs2 value from previous stage
     input [4:0] rs3_in, // rdst
+
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [31:0] rs2_out, // rs2 value to next stage
@@ -823,13 +877,56 @@ module MEM_WB(
             rs1_out <= `ZeroWord;
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
+            PC_jump <= 0;
         end else begin
-             pc_out <= pc_in;
+            pc_out <= pc_in;
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
         end
     end
+
+endmodule
+
+module PC(
+    input clk,               //时钟
+    input rst,             //是否重置地址。1-初始化PC，否则接受新地址
+    input PCsrc,             //数据选择器输入 ex_mem 中间reg
+    input [31:0] newPC,  //ALU计算结果 ex_mem 中间reg
+    input PCdelay, // bubble 来的信号
+    input [31:0] prePC,  //前一个指令的地址，从if_id
+    output reg[31:0] curPC  //当前指令的地址
+);
+
+    initial begin
+        curPC <= -4; //初始值为-4
+    end
+
+    //复制的，没看出来有啥用
+    reg [31:0] tmp;
+    always @(tmp)  begin
+        curPC <= tmp;
+    end
+
+    //检测时钟上升沿计算新指令地址 
+    always@(posedge clk)
+    // #20000 begin
+    begin
+        if (rst | PCdelay) begin
+            if (Reset) begin
+                tmp <= 0;
+            end
+            else tmp = prePC; //保持pc不变一个周期
+        end
+        else begin
+            case(PCsrc)   //仿真时
+                1'b0:   tmp <= curPC + 4;
+                1'b1:   tmp <= newPC;//ex_mem传回来的新地址
+            endcase
+        end
+    end
+
+endmodule
 
 
     /*always @(posedge clk or posedge rst) begin
@@ -850,5 +947,3 @@ module MEM_WB(
             
         }
     end*/
-
-endmodule
