@@ -121,7 +121,7 @@ module SingleCycleCPU(
         .rst(rst),
         .pc_in(PC),          // PC value from PC_REG
         .rs1_in(InstWord),   // InstWord value from the previous stage (IF)
-        .PCsrc(PCsrc),
+        .PCsrc(PCjump),
         .delay(delay),
         .pc_out(PC_1),       // PC value to ID stage
         .rs1_out(Instword_out) // Instruction word to ID stage
@@ -132,14 +132,14 @@ module SingleCycleCPU(
 
    //放在if阶段，但是接口没接， 可能和pc-reg功能有重叠
     
-    wire PCsrc = 1'b0;
+    wire PCsrc ;
     wire [31:0] currentpc; 
 
     PC PCBranch(
-        .clk(clk),
+        .clk(~clk),//记得改回来
         .rst(rst),
-        .PCsrc(PCsrc),
-        .newPC(PC_3),
+        .PCsrc(PCjump),
+        .newPC(NPC),
         .PCdelay(delay),
         .prePC(PC_1),
         .curPC(currentpc)
@@ -271,7 +271,7 @@ module SingleCycleCPU(
         .Rsrc1(Rsrc1),
         .opcode(opcode), 
         .rd(Rdst),
-        .PCsrc(PCsrc),
+        .PCsrc(PCjump),
         .RWrEn(RWrEn),
         .MemWrEn(MemWrEn),
         .pc_out(PC_2),
@@ -347,7 +347,8 @@ module SingleCycleCPU(
 
     
 
-
+    wire PCJump;
+    assign PCJump = 1'b0; // Continuous assignment to assign a value to the wire
 
     ExecutionUnit eu(
         .result(euResult),  // Output of the EU goes to the register file or data memory
@@ -363,15 +364,14 @@ module SingleCycleCPU(
         .newPC(NPC),
         .memdata(StoreData),
         .PCsrc(PCjump)
-
     );
 
-    wire PCjump;
+   
 
     EX_MEM EX_MEM_Register(
         .clk(clk),
         .rst(rst),
-        .pc_in(NPC),
+        //.pc_in(NPC),
         .rs1_in(euResult),
         .rs2_in(MemSize),
         .rs3_in(StoreData),
@@ -384,8 +384,8 @@ module SingleCycleCPU(
         .rs2_out(MemSize_out),
         .rs3_out(StoreData_out),
         .rs4_out(Rdst2),
-        .PC_jump(PCjump),
-        .PC_jump_out(PCsrc),
+        //.PC_jump(PCjump),
+        //.PC_jump_out(PCsrc),
         .RWrEn_out(RWrEn2),
         .MemWrEn_out(MemWrEn2),
         .opcode_out(ex_opcode1)
@@ -581,8 +581,7 @@ always @(*) begin
     result    = 32'hX;
     MemWrEn   = 1'b1;
     MemSize   = 2'b10; // Default to word size
-
-
+    PCsrc = 1'b0;
 
     case (opcode)
         `OPCODE_COMPUTE: begin // R-type instructions
@@ -651,6 +650,7 @@ always @(*) begin
             end else begin
                 MemWrEn = 1'b0;  // Disable memory write for non-store operations
                 memdata = 32'hX; // Clear StoreData for non-store operations
+                PCsrc = 1'b0;
             end
         end
 
@@ -663,11 +663,11 @@ always @(*) begin
                 `FUNC_BNE:  begin newPC = (opA != opB) ? oldPC + imm : oldPC + 4;
                             PCsrc = (opA != opB) ? 1'b1 : 1'b0;
                 end
-                `FUNC_BLT:  begin newPC = (opA >= opB) ? oldPC + imm : oldPC + 4; 
-                            PCsrc = (opA >= opB) ? 1'b1 : 1'b0;
-                end
-                `FUNC_BGE:  begin newPC = (opA  < opB) ? oldPC + imm : oldPC + 4; 
+                `FUNC_BLT:  begin newPC = (opA < opB) ? oldPC + imm : oldPC + 4; 
                             PCsrc = (opA < opB) ? 1'b1 : 1'b0;
+                end
+                `FUNC_BGE:  begin newPC = (opA  >= opB) ? oldPC + imm : oldPC + 4; 
+                            PCsrc = (opA >= opB) ? 1'b1 : 1'b0;
                             end
                 `FUNC_BLTU: begin newPC = ($signed(opA) >= $signed(opB)) ? oldPC + imm : oldPC + 4; 
                             PCsrc = ($signed(opA) >= $signed(opB)) ? 1'b1 : 1'b0;
@@ -675,7 +675,9 @@ always @(*) begin
                 `FUNC_BGEU: begin newPC = ($signed(opA)  < $signed(opB)) ? oldPC + imm : oldPC + 4; 
                             PCsrc = ($signed(opA)  < $signed(opB)) ? 1'b1 : 1'b0;
                 end
-                default:    newPC = 32'hX;
+                default:    begin newPC = 32'hX;
+                            PCsrc = 1'b0;
+                            end
             endcase
         end
              
@@ -703,7 +705,9 @@ always @(*) begin
         end
 
         // I-type instructions can be added here if needed
-        default: result = 32'hX; // Default for unrecognized opcode
+        default: begin result = 32'hX; // Default for unrecognized opcode
+                    PCsrc = 1'b0;
+                end
     endcase
 end
 
