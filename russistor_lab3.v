@@ -88,10 +88,12 @@ module SingleCycleCPU(
    wire [31:0] StoreData_out; // Store data output from EX_MEM Register
    wire [1:0] MemSize_out; // MemSize output from EX_MEM Register
     // Output from ID_EX Register
-   wire [4:0] Rdst1, Rdst2, Rdst3; // Passed through intermediate registers
+   wire [4:0] Rdst1;
+   wire [4:0] Rdst2;
+   wire [4:0] Rdst3; // Passed through intermediate registers
    wire [31:0] ext_imm_out; // Output from ID_EX Register
-
-
+   
+   
 
 
 
@@ -239,7 +241,7 @@ module SingleCycleCPU(
         .AddrA(Rsrc1), .DataOutA(Rdata1),
         .AddrB(Rsrc2), .DataOutB(Rdata2),
         .AddrW(Rdst3),  .DataInW(RWrdata),
-            .WenW(RWrEn),  .CLK(clk)
+            .WenW(RWrEn),  .CLK(~clk)
     );///read in ID and write in WB
 
 
@@ -325,9 +327,9 @@ module SingleCycleCPU(
             ? Rdst3 : 5'b0),
         .rs1(Rdata1_out),
         .rs2(Rdata2_out),
+        .PC_2(PC_2),
         .rd_ex(euResult_out),
         .rd_mem(euResult_final),
-        .clk(clk),
         .opA(Rdata1_out_fwd),
         .opB(Rdata2_out_fwd)
     );
@@ -433,6 +435,33 @@ module SingleCycleCPU(
     || (ex_opcode2 == `OPCODE_JUMP_REG)
     || (ex_opcode2 == `OPCODE_LOAD_UPPR)
     || (ex_opcode2 == `OPCODE_ADD_UPPR)
+    || (ex_opcode1 == `OPCODE_COMPUTE)
+    || (ex_opcode1 == `OPCODE_IMMEDIATE)
+    || (ex_opcode1 == `OPCODE_LOAD)
+    || (ex_opcode1 == `OPCODE_STORE)
+    || (ex_opcode1 == `OPCODE_BRANCH)
+    || (ex_opcode1 == `OPCODE_JUMP)
+    || (ex_opcode1 == `OPCODE_JUMP_REG)
+    || (ex_opcode1 == `OPCODE_LOAD_UPPR)
+    || (ex_opcode1 == `OPCODE_ADD_UPPR)
+    || (ex_opcode == `OPCODE_COMPUTE)
+    || (ex_opcode == `OPCODE_IMMEDIATE)
+    || (ex_opcode == `OPCODE_LOAD)
+    || (ex_opcode == `OPCODE_STORE)
+    || (ex_opcode == `OPCODE_BRANCH)
+    || (ex_opcode == `OPCODE_JUMP)
+    || (ex_opcode == `OPCODE_JUMP_REG)
+    || (ex_opcode == `OPCODE_LOAD_UPPR)
+    || (ex_opcode == `OPCODE_ADD_UPPR)
+    || (opcode == `OPCODE_COMPUTE)
+    || (opcode == `OPCODE_IMMEDIATE)
+    || (opcode == `OPCODE_LOAD)
+    || (opcode == `OPCODE_STORE)
+    || (opcode == `OPCODE_BRANCH)
+    || (opcode == `OPCODE_JUMP)
+    || (opcode == `OPCODE_JUMP_REG)
+    || (opcode == `OPCODE_LOAD_UPPR)
+    || (opcode == `OPCODE_ADD_UPPR)
 );
 
 
@@ -448,7 +477,7 @@ module Forward(
     input [4:0] rs2_addr,
     input [4:0] rd_ex_addr,
     input [4:0] rd_mem_addr,
-    input clk,
+    input [31:0] PC_2,
     input [31:0] rs1,
     input [31:0] rs2,
     input [31:0] rd_ex,
@@ -459,31 +488,28 @@ module Forward(
 );
 
 
-always @(negedge clk) begin
 
-    if (rd_ex_addr == rs1_addr) begin
-        opA <= rd_ex_addr;
-    end
-
-    else if (rd_mem_addr == rs1_addr) begin
-        opA <= rd_mem_addr;
-    end
-
-    else begin
+always @* begin
+    if (PC_2 <= 0) begin
         opA <= rs1;
-    end
-
-
-    if (rd_ex_addr == rs2_addr) begin
-        opB <= rd_ex_addr;
-    end
-
-    if (rd_mem_addr == rs2_addr) begin
-        opB <= rd_mem_addr;
-    end
-
-    else begin
         opB <= rs2;
+    end else begin
+        // 当 PC_2 > 0，执行原有逻辑
+        if (rd_ex_addr == rs1_addr) begin
+            opA <= rd_ex;
+        end else if (rd_mem_addr == rs1_addr) begin
+            opA <= rd_mem;
+        end else begin
+            opA <= rs1;
+        end
+
+        if (rd_ex_addr == rs2_addr) begin
+            opB <= rd_ex;
+        end else if (rd_mem_addr == rs2_addr) begin
+            opB <= rd_mem;
+        end else begin
+            opB <= rs2;
+        end
     end
 end
 
@@ -845,6 +871,9 @@ module EX_MEM(
     output reg MemWrEn_out
 );
 
+    initial begin
+    rs4_out = 5'bxxxxx;      // 初始值设置为 'x'
+    end
     // Logic to update the register values on the clock edge
     always @(negedge clk) begin
         if (rst == `RstEnable) begin
@@ -896,6 +925,10 @@ module MEM_WB(
     output reg RWrEn_out,
     output reg MemWrEn_out
 );
+
+    initial begin
+    rs3_out = 5'bxxxxx;      // 初始值设置为 'x'
+    end
 
     // Logic to update the register values on the clock edge
     always @(negedge clk) begin
