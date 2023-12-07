@@ -43,12 +43,12 @@
 `define SIZE_WORD     2'b10
 
 `define ZeroWord 32'h00000000 // add a new define to subsitude 32b'0
-`define RstEnable 1'b1  // add a define of rstenable value 1 is right?
+`define RstEnable 1'b0  // add a define of rstenable value 1 is right?
 
 module SingleCycleCPU(
+    input  rst,
     output halt, // Reset signal
-    input  clk,  // Clock signal
-    input  rst
+    input  clk  // Clock signal
 );
 
    wire [31:0] PC, InstWord;
@@ -56,17 +56,17 @@ module SingleCycleCPU(
    wire [1:0]  MemSize;
    wire [31:0] StoreData;
    reg         MemWrEn;
-   reg         MemWrEn1;
-   reg         MemWrEn2;
-   reg         MemWrEn3;
+   wire         MemWrEn1;
+   wire         MemWrEn2;
+   wire         MemWrEn3;
 
 
    wire [4:0]  Rsrc1,  Rsrc2,  Rdst;
    wire [31:0] Rdata1, Rdata2, RWrdata;
    reg         RWrEn;
-   reg         RWrEn1;
-   reg         RWrEn2;
-   reg         RWrEn3;
+   wire         RWrEn1;
+   wire         RWrEn2;
+   wire         RWrEn3;
 
    wire [31:0] NPC, PC_Plus_4;
    wire [6:0]  opcode;
@@ -87,25 +87,13 @@ module SingleCycleCPU(
    wire [31:0] Rdata1_out, Rdata2_out; // Data outputs from ID_EX Register
    wire [31:0] StoreData_out; // Store data output from EX_MEM Register
    wire [1:0] MemSize_out; // MemSize output from EX_MEM Register
-   wire [21:0] id_ex_bus_out; // Output from ID_EX Register
-   wire [4:0] ex_Rdst; // Extracted from id_ex_bus_out
-   wire [4:0] ex_Rdst_pass, ex_Rdst_final; // Passed through intermediate registers
+    // Output from ID_EX Register
+   wire [4:0] Rdst1, Rdst2, Rdst3; // Passed through intermediate registers
    wire [31:0] ext_imm_out; // Output from ID_EX Register
 
 
 
-   // Only support R-TYPE ADD and SUB
-   assign halt = !(
-           (opcode == `OPCODE_COMPUTE)
-        || (opcode == `OPCODE_IMMEDIATE)
-        || (opcode == `OPCODE_LOAD)
-        || (opcode == `OPCODE_STORE)
-        || (opcode == `OPCODE_BRANCH)
-        || (opcode == `OPCODE_JUMP)
-        || (opcode == `OPCODE_JUMP_REG)
-        || (opcode == `OPCODE_LOAD_UPPR)
-        || (opcode == `OPCODE_ADD_UPPR)
-    );
+
 
 
 
@@ -120,7 +108,7 @@ module SingleCycleCPU(
     );
 
     Reg PC_REG(
-        .Din(curPC),  .Qout(PC),
+        .Din(currentpc),  .Qout(PC),
         .WEN(1'b0), .CLK(clk),
         .RST(rst)
     );
@@ -131,17 +119,19 @@ module SingleCycleCPU(
         .rst(rst),
         .pc_in(PC),          // PC value from PC_REG
         .rs1_in(InstWord),   // InstWord value from the previous stage (IF)
-        .keep()
+        .PCsrc(PCsrc),
+        .delay(delay),
         .pc_out(PC_1),       // PC value to ID stage
-        .rs1_out(Instword_out), // Instruction word to ID stage
-        .keep_out()
+        .rs1_out(Instword_out) // Instruction word to ID stage
     ); 
+
+    wire delay = 1'b0;
 
 
    //放在if阶段，但是接口没接， 可能和pc-reg功能有重叠
     
     wire PCsrc = 1'b0;
-    wire currentpc; 
+    wire [31:0] currentpc; 
 
     PC PCBranch(
         .clk(clk),
@@ -178,9 +168,8 @@ module SingleCycleCPU(
     end
 
 
-    wire [21:0] id_ex_bus;
-    assign id_ex_bus = {funct7, funct3, Rdst, opcode}; // Concatenation
-
+   
+   
     assign SImm = {
         Instword_out[31:25],
         Instword_out[11:7]
@@ -210,30 +199,27 @@ module SingleCycleCPU(
         || (opcode == `OPCODE_ADD_UPPR)  ? UImm
         :  (opcode == `OPCODE_JUMP)      ? JImm
         :  32'hX;
+    
+    
 
 
 
-///
-    // Bubble
-    reg [7:0] prev;
-    reg [4:0] prerd;
-    reg keep;
-    reg keep1;
-    reg keep2;
-    reg keep3;
-    reg keep4;
-
-
-    reg delay;
 
     Stall bubble(
-        .prev(prev), .rd(prevrd), .rs1(Rsrc1),
+        .prev(ex_opcode), 
+        .rd(Rdst1), 
+        .rs1((opcode == `OPCODE_COMPUTE)
+            || (opcode == `OPCODE_IMMEDIATE)
+            || (opcode == `OPCODE_LOAD)
+            || (opcode == `OPCODE_STORE)
+            || (opcode == `OPCODE_BRANCH)
+            ? Rsrc1 : 5'b0),
         .rs2(  (opcode == `OPCODE_COMPUTE)
             || (opcode == `OPCODE_STORE)
             || (opcode == `OPCODE_BRANCH)
-             ? Rsrc2 : 32'b0),
-        .clk(clk),   .halt(halt),
-        .keep(keep), .delay(delay)
+             ? Rsrc2 : 5'b0),
+        .clk(clk),   .RST(rst),
+        .delay(delay)
     );
 
     reg [4:0] oldrd;
@@ -252,7 +238,7 @@ module SingleCycleCPU(
     RegFile RF(
         .AddrA(Rsrc1), .DataOutA(Rdata1),
         .AddrB(Rsrc2), .DataOutB(Rdata2),
-        .AddrW(ex_Rdst_final),  .DataInW(RWrdata),
+        .AddrW(Rdst3),  .DataInW(RWrdata),
             .WenW(RWrEn),  .CLK(clk)
     );///read in ID and write in WB
 
@@ -277,20 +263,27 @@ module SingleCycleCPU(
         .rs1_in(Rdata1),
         .rs2_in(Rdata2),
         .rs3_in(ext_imm),
-        .rs4_in(id_ex_bus),
+        .funct7(funct7), 
+        .funct3(funct3), 
+        .Rsrc2(Rsrc2),   
+        .Rsrc1(Rsrc1),
+        .opcode(opcode), 
+        .rd(Rdst),
+        .PCsrc(PCsrc),
         .RWrEn(RWrEn),
         .MemWrEn(MemWrEn),
-        .keep(),
         .pc_out(PC_2),
         .rs1_out(Rdata1_out),
         .rs2_out(Rdata2_out),
         .rs3_out(ext_imm_out),
-        .rs4_out(id_ex_bus_out),
+        .funct7_ex(ex_funct7), 
+        .funct3_ex(ex_funct3), 
+        .Rsrc2_ex(ex_Rsrc2),   
+        .Rsrc1_ex(ex_Rsrc1),
+        .opcode_ex(ex_opcode),
         .RWrEn_out(RWrEn1),
         .MemWrEn_out(MemWrEn1),
-
-
-        .keep_out()
+        .rd_out(Rdst1)
     );
 
 
@@ -304,34 +297,60 @@ module SingleCycleCPU(
     //Ex Stage
 
     Forward fwd(
+        .rs1_addr((ex_opcode == `OPCODE_COMPUTE)
+            || (ex_opcode == `OPCODE_IMMEDIATE)
+            || (ex_opcode == `OPCODE_LOAD)
+            || (ex_opcode == `OPCODE_STORE)
+            || (ex_opcode == `OPCODE_BRANCH)
+            ? ex_Rsrc1 : 5'b0),
+        .rs2_addr(  (ex_opcode == `OPCODE_COMPUTE)
+            || (ex_opcode == `OPCODE_STORE)
+            || (ex_opcode == `OPCODE_BRANCH)
+             ? ex_Rsrc2 : 5'b0),
+        .rd_ex_addr((ex_opcode1 == `OPCODE_COMPUTE)
+            || (ex_opcode1 == `OPCODE_IMMEDIATE)
+            || (ex_opcode1 == `OPCODE_LOAD)
+            || (ex_opcode1 == `OPCODE_JUMP)
+            || (ex_opcode1 == `OPCODE_JUMP_REG)
+            || (ex_opcode1 == `OPCODE_LOAD_UPPR)
+            || (ex_opcode1 == `OPCODE_ADD_UPPR)
+            ? Rdst2 : 5'b0),
+        .rd_mem_addr((ex_opcode2 == `OPCODE_COMPUTE)
+            || (ex_opcode2 == `OPCODE_IMMEDIATE)
+            || (ex_opcode2 == `OPCODE_LOAD)
+            || (ex_opcode2 == `OPCODE_JUMP)
+            || (ex_opcode2 == `OPCODE_JUMP_REG)
+            || (ex_opcode2 == `OPCODE_LOAD_UPPR)
+            || (ex_opcode2 == `OPCODE_ADD_UPPR)
+            ? Rdst3 : 5'b0),
         .rs1(Rdata1_out),
-        .rs2(  (opcode == `OPCODE_COMPUTE)
-            || (opcode == `OPCODE_STORE)
-            || (opcode == `OPCODE_BRANCH)
-             ? Rdata2_out : 32'b0),
-        .rd1(id_ex_bus[11:7]),
-        .rd2(InstWord[11:7]),
-        .output1(prekeep && prewr),
-        .output2(oldkeep && oldwr),
+        .rs2(Rdata2_out),
+        .rd_ex(euResult_out),
+        .rd_mem(euResult_final),
         .clk(clk),
-        .fwd1(fwd1),
-        .fwd2(fwd2)
+        .opA(Rdata1_out_fwd),
+        .opB(Rdata2_out_fwd)
     );
 
 
-
+    wire [31:0] Rdata1_out_fwd;
+    wire [31:0] Rdata2_out_fwd;
     wire [6:0] ex_funct7;
     wire [2:0] ex_funct3;
     wire [6:0] ex_opcode;
+    wire [4:0] ex_Rsrc1;
+    wire [4:0] ex_Rsrc2;
+    wire [6:0] ex_opcode1;
+    wire [6:0] ex_opcode2;
 
-    assign {ex_funct7, ex_funct3, ex_Rdst, ex_opcode} = id_ex_bus_out;
+    
 
 
 
     ExecutionUnit eu(
         .result(euResult),  // Output of the EU goes to the register file or data memory
-        .opA(Rdata1_out),       // Operand A comes from the register file (rs1)
-        .opB(Rdata2_out),       // Operand B is immediate for I-type and load and save instructions, or rs2 for R-type
+        .opA(Rdata1_out_fwd),       // Operand A comes from the register file (rs1)
+        .opB(Rdata2_out_fwd),       // Operand B is immediate for I-type and load and save instructions, or rs2 for R-type
         .func(ex_funct3),
         .aux_func(ex_funct7),  // Auxiliary function field from the instruction (not used for I-type)
         .opcode(ex_opcode),    // Opcode to determine the operation
@@ -354,20 +373,20 @@ module SingleCycleCPU(
         .rs1_in(euResult),
         .rs2_in(MemSize),
         .rs3_in(StoreData),
-        .rs4_in(ex_Rdst),
+        .rs4_in(Rdst1),
         .RWrEn(RWrEn1),
         .MemWrEn(MemWrEn1),
-        .keep(),
+        .opcode(ex_opcode),
         .pc_out(PC_3),
         .rs1_out(euResult_out),
         .rs2_out(MemSize_out),
         .rs3_out(StoreData_out),
-        .rs4_out(ex_Rdst_pass),
+        .rs4_out(Rdst2),
         .PC_jump(PCjump),
         .PC_jump_out(PCsrc),
         .RWrEn_out(RWrEn2),
         .MemWrEn_out(MemWrEn2),
-        .keep_out()
+        .opcode_out(ex_opcode1)
     );
 
 
@@ -390,111 +409,81 @@ module SingleCycleCPU(
         .pc_in(PC_3),
         .rs1_in(ext_data),
         .rs2_in(euResult_out),
-        .rs3_in(ex_Rdst_pass),
+        .rs3_in(Rdst2),
         .RWrEn(RWrEn2),
         .MemWrEn(MemWrEn2),
-        .keep(),
+        .opcode(ex_opcode1),
         .pc_out(PC_4),
         .rs1_out(ext_data_out),
         .rs2_out(euResult_final),
-        .rs3_out(ex_Rdst_final),
+        .rs3_out(Rdst3),
         .RWrEn_out(RWrEn3),
-        .MemWrEn(MemWrEn3),
 
-        .MemWrEn_out()
-        .keep_out()
+        .MemWrEn_out(MemWrEn3),
+        .opcode_out(ex_opcode2)
     );
 
-
-
-
-
-    /*
-    always @ (negedge clk) begin
-        MemWrEn <= (opcode != `OPCODE_STORE);
-    end
-    */
-
-    // Control signals for memory write operations
-    /*
-    always @(*) begin
-        if (opcode == `OPCODE_STORE) begin
-            MemWrEn = 1'b1; // Enable memory write for store operations
-            // Determine the memory size and prepare StoreData for store operations
-            case (funct3)
-                `FUNC_SB: StoreData = {Rdata2[7:0]};  // Prepare byte to store
-                `FUNC_SH: StoreData = {Rdata2[15:0]}; // Prepare halfword to store
-                `FUNC_SW: StoreData = Rdata2;         // Prepare word to store
-                default:  StoreData = 32'hX;          // Undefined behavior
-            endcase
-        end else begin
-            MemWrEn   = 1'b0;  // Disable memory write for non-store operations
-            StoreData = 32'hX; // Clear StoreData for non-store operations
-        end
-    end
-    */
-
-
-
-   // Hardwired to support R-Type instructions -- please add muxes and other control signals
-   // EU instantiation for R-type (COMPUTE) operations
-   // Control signals (these would be set by your control unit)
+    assign halt = !(
+        (ex_opcode2 == `OPCODE_COMPUTE)
+    || (ex_opcode2 == `OPCODE_IMMEDIATE)
+    || (ex_opcode2 == `OPCODE_LOAD)
+    || (ex_opcode2 == `OPCODE_STORE)
+    || (ex_opcode2 == `OPCODE_BRANCH)
+    || (ex_opcode2 == `OPCODE_JUMP)
+    || (ex_opcode2 == `OPCODE_JUMP_REG)
+    || (ex_opcode2 == `OPCODE_LOAD_UPPR)
+    || (ex_opcode2 == `OPCODE_ADD_UPPR)
+);
 
 
 
 
 
-
-
-   // Control unit (not shown) would set 'euSrc' based on the instruction type
-   // For example, if the opcode indicates an I-type instruction, 'euSrc' would be set to 1
-
-
-
-   // Fetch Address Datapath
-   // assign PC_Plus_4 = PC + 4;
-   // assign NPC = PC_Plus_4;
 
 endmodule // SingleCycleCPU
 
 
 module Forward(
-    input [4:0] rs1,
-    input [4:0] rs2,
-    input [4:0] rd1,
-    input [4:0] rd2,
-    input output1,
-    input output2,
+    input [4:0] rs1_addr,
+    input [4:0] rs2_addr,
+    input [4:0] rd_ex_addr,
+    input [4:0] rd_mem_addr,
     input clk,
+    input [31:0] rs1,
+    input [31:0] rs2,
+    input [31:0] rd_ex,
+    input [31:0] rd_mem,
 
-    output reg [1:0] fwd1,
-    output reg [1:0] fwd2
+    output reg [31:0] opA,
+    output reg [31:0] opB
 );
 
-initial begin
-    fwd1 <= 0;
-    fwd2 <= 0;
-end
 
-always @(posedge clk) begin
-    if (output1) begin
-        if (rd1 == rs1) begin
-            fwd1 <= fwd1 | 2'b01;
-        end
+always @(negedge clk) begin
 
-        if (rd1 == rs2) begin
-            fwd1 <= fwd1 | 2'b10;
-        end
+    if (rd_ex_addr == rs1_addr) begin
+        opA <= rd_ex_addr;
     end
 
-    if (output2) begin
-        if (rd2 == rs1) begin
-            fwd2 <= fwd2 | 2'b01;
-        end
+    else if (rd_mem_addr == rs1_addr) begin
+        opA <= rd_mem_addr;
+    end
 
-        if (rd2 == rs2) begin
-            fwd2 <= fwd2 | 2'b10;
-        end
+    else begin
+        opA <= rs1;
+    end
+
+
+    if (rd_ex_addr == rs2_addr) begin
+        opB <= rd_ex_addr;
+    end
+
+    if (rd_mem_addr == rs2_addr) begin
+        opB <= rd_mem_addr;
+    end
+
+    else begin
+        opB <= rs2;
     end
 end
 
@@ -502,53 +491,38 @@ endmodule
 
 
 module Stall(
-    input [7:0] prev,
+    input [6:0] prev,
     input [4:0] rd,
     input [4:0] rs1,
     input [4:0] rs2,
     input clk,
-    input halt,
-    output reg keep,
+    input RST,
     output reg delay
 );
 
 reg temp;
 
 initial begin
-    keep  <= 0;
     delay <= 0;
 end
 
-always @(negedge clk) begin
-    keep <= temp;
-end
 
-always @(opcode or halt) begin
-    if (halt) begin
-        temp  <= 0;
-        delay <= 0;
-    end
-    else begin
+always @(prev) begin
         if (prev == `OPCODE_LOAD) begin
             if (rs1 == rd) begin
-                keep  <= 1;
                 delay <= 1;
             end
             else if (rs2 == rd) begin
-                keep  <= 1;
                 delay <= 1;
             end
             else begin
-                keep  <= 1;
                 delay <= 0;
             end
         end
         else begin
-            temp  <= 1;
             delay <= 0;
         end
     end
-end
 
 endmodule
 
@@ -738,15 +712,16 @@ module IF_ID(
     input clk,
     input rst, // Reset signal
     input PCsrc,
+    input delay,
 
     input wire [31:0] pc_in, // PC value from previous stage
     input wire [31:0] rs1_in, // rs1 value from previous stage  //add wire to all input
     output reg [31:0] pc_out, // PC value to next stage
-    output reg [31:0] rs1_out, // rs1 value to next stage
+    output reg [31:0] rs1_out // rs1 value to next stage
 );
 
     // Logic to update the register values on the clock edge
-    always @(posedge clk) begin
+    always @(negedge clk) begin
         if (rst == `RstEnable) begin
             pc_out <= `ZeroWord;
             rs1_out <= `ZeroWord;
@@ -755,23 +730,14 @@ module IF_ID(
 	        pc_out <= `ZeroWord;
 			rs1_out <= `ZeroWord;
 
-        end else begin
+        end else if (!delay) begin // 仅当写入使能信号激活时执行写入
             pc_out <= pc_in;
             rs1_out <= rs1_in;
         end
     end
 endmodule
 
-    /*always @(posedge clk or posedge rst) begin
-        if (rst) {
-            pc_out <= `ZeroWord; // Non-blocking for sequential logic
-            rs1_out <= `ZeroWord; // Non-blocking for sequential logic
-        } else {
-            pc_out <= pc_in; // Non-blocking for sequential logic
-            rs1_out <= rs1_in; // Non-blocking for sequential logic
-        }
-    end
-endmodule*/
+    
 
 
 
@@ -783,39 +749,57 @@ module ID_EX(
     input [31:0] rs1_in, // rs1 value from previous stage
     input [31:0] rs2_in, // rs2 value from previous stage
     input [31:0] rs3_in, // Immediate value from previous stage
-    input [21:0] rs4_in, //bus
-    input keep,
+    input [6:0] funct7,  // 假设 funct7 是 7 位宽
+    input [2:0] funct3,  // 假设 funct3 是 3 位宽
+    input [4:0] Rsrc2,   // 假设 Rsrc2 是 5 位宽
+    input [4:0] Rsrc1,   // 假设 Rsrc1 是 5 位宽
+    input [6:0] opcode,  // 假设 opcode 是 7 位宽
+    input [4:0] rd,
+    input delay,
     input RWrEn,
     input MemWrEn,
+    input PCsrc,
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [31:0] rs2_out, // rs2 value to next stage
     output reg [31:0] rs3_out, // Immediate value to next stage
-    output reg [21:0] rs4_out,
-    output reg keep_out,
+    output reg [6:0] funct7_ex,  // 假设 funct7 是 7 位宽
+    output reg [2:0] funct3_ex,  // 假设 funct3 是 3 位宽
+    output reg [4:0] Rsrc2_ex,   // 假设 Rsrc2 是 5 位宽
+    output reg [4:0] Rsrc1_ex,   // 假设 Rsrc1 是 5 位宽
+    output reg [6:0] opcode_ex,  // 假设 opcode 是 7 位宽
     output reg RWrEn_out,
-    output reg MemWrEn_out
+    output reg MemWrEn_out,
+    output reg [4:0] rd_out
 );
 
     // Logic to update the register values on the clock edge
 
-always @(posedge clk) begin
+always @(negedge clk) begin
         if (rst == `RstEnable) begin
             pc_out <= `ZeroWord;
             rs1_out <= `ZeroWord;
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
-            rs4_out <= `ZeroWord;
-            keep_out <= 1'b0; 
+            funct7_ex <= `ZeroWord;
+            funct3_ex <= `ZeroWord;
+            Rsrc2_ex <= `ZeroWord;  
+            Rsrc1_ex <= `ZeroWord;
+            opcode_ex <= `ZeroWord;
+            rd_out<= 5'b0;
             RWrEn_out <= 1'b1;
             MemWrEn_out <= 1'b1;
-            end else if(PCsrc)begin //跳转发生就清零，复制一下上面的部分，改一下控制信号就行了，记得把PCsrc指令接过来
+            end else if(PCsrc  || delay)begin //跳转发生就清零，复制一下上面的部分，改一下控制信号就行了，记得把PCsrc指令接过来
 	        pc_out <= `ZeroWord;
 			rs1_out <= `ZeroWord;
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
-            rs4_out <= `ZeroWord;
-            keep_out <= 1'b0; 
+            funct7_ex <= `ZeroWord;
+            funct3_ex <= `ZeroWord;
+            Rsrc2_ex <= `ZeroWord;  
+            Rsrc1_ex <= `ZeroWord;
+            opcode_ex <= `ZeroWord;
+            rd_out<= 5'b0;
             RWrEn_out <= 1'b1;
             MemWrEn_out <= 1'b1;
         end else begin
@@ -823,31 +807,18 @@ always @(posedge clk) begin
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
-            rs4_out <= rs4_in;
-            keep_out <= keep; 
-            RWrEn_out <= RWrEn_out;
+            funct7_ex <= funct7;
+            funct3_ex <= funct3;
+            Rsrc2_ex <= Rsrc2;  
+            Rsrc1_ex <= Rsrc1;
+            opcode_ex <= opcode; 
+            rd_out<= rd;
+            RWrEn_out <= RWrEn;
             MemWrEn_out <= MemWrEn;
         end
     end
 
-   /* always @(posedge clk or posedge rst) begin
-        if (rst) {
-            // Initialize the output registers to a known state
-            pc_out = 32'b0;
-            rs1_out = 32'b0;
-            rs2_out = 32'b0;
-            rs3_out = 32'b0;
-            rs4_out = 32'b0;
-        } else {
-            // Pass the values to the next stage
-            pc_out = pc_in;
-            rs1_out = rs1_in;
-            rs2_out = rs2_in;
-            rs3_out = rs3_in;
-            rs4_out = rs4_in;
-            
-        }
-    end */
+   
 
 endmodule
 
@@ -860,8 +831,8 @@ module EX_MEM(
     input [31:0] rs3_in, // Immediate value from previous stage
     input [4:0] rs4_in,
     input PC_jump,
-    input keep,
-    input RWrnE,
+    input [6:0] opcode,
+    input RWrEn,
     input MemWrEn,
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
@@ -869,13 +840,13 @@ module EX_MEM(
     output reg [31:0] rs3_out, // Immediate value to next stage
     output reg [4:0] rs4_out,
     output reg PC_jump_out,
-    output reg keep_out,
+    output reg [6:0]opcode_out,
     output reg RWrEn_out,
     output reg MemWrEn_out
 );
 
     // Logic to update the register values on the clock edge
-    always @(posedge clk) begin
+    always @(negedge clk) begin
         if (rst == `RstEnable) begin
             pc_out <= `ZeroWord;
             rs1_out <= `ZeroWord;
@@ -883,7 +854,7 @@ module EX_MEM(
             rs3_out <= `ZeroWord;
             rs4_out <= `ZeroWord;
             PC_jump_out <= 1'b0;
-            keep_out <= 1'b0; 
+            opcode_out <= 7'b0; 
             RWrEn_out <= 1'b1;
             MemWrEn_out <= 1'b1; 
  
@@ -894,31 +865,14 @@ module EX_MEM(
             rs3_out <= rs3_in;
             rs4_out <= rs4_in;
             PC_jump_out <= PC_jump;
-            keep_out <= keep; 
+            opcode_out <= opcode; 
             RWrEn_out <= RWrEn_out;
             MemWrEn_out <= MemWrEn;
         end
     end
 
 
-    /*always @(posedge clk or posedge rst) begin
-        if (rst) {
-            // Initialize the output registers to a known state
-            pc_out = 32'b0;
-            rs1_out = 32'b0;
-            rs2_out = 32'b0;
-            rs3_out = 32'b0;
-            rs4_out = 32'b0;
-        } else {
-            // Pass the values to the next stage
-            pc_out = pc_in;
-            rs1_out = rs1_in;
-            rs2_out = rs2_in;
-            rs3_out = rs3_in;
-            rs4_out = rs4_in;
-            
-        }
-    end*/
+    
     
 
 endmodule
@@ -930,28 +884,27 @@ module MEM_WB(
     input [31:0] rs1_in, // rs1 value from previous stage
     input [31:0] rs2_in, // rs2 value from previous stage
     input [4:0] rs3_in, // rdst
-    input keep,
-    input RWrnE,
+    input [6:0] opcode,
+    input RWrEn,
     input MemWrEn,
 
     output reg [31:0] pc_out, // PC value to next stage
     output reg [31:0] rs1_out, // rs1 value to next stage
     output reg [31:0] rs2_out, // rs2 value to next stage
-    output reg [4:0] rs3_out // Immediate value to next stage
-    output reg keep_out,
+    output reg [4:0] rs3_out, // Immediate value to next stage
+    output reg [6:0]opcode_out,
     output reg RWrEn_out,
     output reg MemWrEn_out
 );
 
     // Logic to update the register values on the clock edge
-    always @(posedge clk) begin
+    always @(negedge clk) begin
         if (rst == `RstEnable) begin
             pc_out <= `ZeroWord;
             rs1_out <= `ZeroWord;
             rs2_out <= `ZeroWord;
             rs3_out <= `ZeroWord;
-            PC_jump <= 0;
-            keep_out <= 1'b0; 
+            opcode_out <= 7'b0; 
             RWrEn_out <= 1'b1;
             MemWrEn_out <= 1'b1;
         end else begin
@@ -959,7 +912,7 @@ module MEM_WB(
             rs1_out <= rs1_in;
             rs2_out <= rs2_in;
             rs3_out <= rs3_in;
-            keep_out <= keep; 
+            opcode_out <= opcode; 
             RWrEn_out <= RWrEn_out;
             MemWrEn_out <= MemWrEn;
         end
@@ -988,11 +941,11 @@ module PC(
     end
 
     //检测时钟上升沿计算新指令地址 
-    always@(posedge clk)
+    always@(negedge clk)
     // #20000 begin
     begin
-        if (rst | PCdelay) begin
-            if (Reset) begin
+        if (!rst || PCdelay) begin
+            if (!rst) begin
                 tmp <= 0;
             end
             else tmp = prePC; //保持pc不变一个周期
@@ -1006,23 +959,3 @@ module PC(
     end
 
 endmodule
-
-
-    /*always @(posedge clk or posedge rst) begin
-        if (rst) {
-            // Initialize the output registers to a known state
-            pc_out = 32'b0;
-            rs1_out = 32'b0;
-            rs2_out = 32'b0;
-            rs3_out = 32'b0;
-            rs4_out = 32'b0;
-        } else {
-            // Pass the values to the next stage
-            pc_out = pc_in;
-            rs1_out = rs1_in;
-            rs2_out = rs2_in;
-            rs3_out = rs3_in;
-            rs4_out = rs4_in;
-            
-        }
-    end*/
